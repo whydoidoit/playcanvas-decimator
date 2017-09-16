@@ -5,13 +5,13 @@ PlayCanvas Decimator that works on Mesh Instances either in the Editor or in the
 ## Installation
 
 ```shell
-npm install --save playcanvas-decimator
+npm install --save decimator
 ```
 
 ## Usage
 
 ```javascript
-import decimate from 'playcanvas-decimator';
+import decimate from 'decimator';
 
 let mesh = decimate(numberOfFaces, mesh.meshInstances[0])
 
