@@ -16,5 +16,14 @@
   "license": "ISC",
   "dependencies": {
     "lodash": "^4.17.4"
-  }
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whydoidoit/playcanvas-decimator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/whydoidoit/playcanvas-decimator/issues"
+  },
+  "homepage": "https://github.com/whydoidoit/playcanvas-decimator#readme"
 }
