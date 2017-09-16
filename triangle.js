@@ -36,7 +36,7 @@ Object.defineProperties(Triangle.prototype, {
     },
     area: {
         get: function() {
-            return Math.max(0.00000001, this.normal.dot(V(this.v2).sub(this.v1).cross(V(this.v3).sub(this.v1))))
+            return Math.max(0.00000001, this.normal.dot(V().cross(V(this.v2).sub(this.v1), V(this.v3).sub(this.v1))))
         }
     },
     planeD: {
@@ -49,8 +49,8 @@ Object.defineProperties(Triangle.prototype, {
 
 Triangle.prototype.bary = function(point) {
     let result = new pc.Vec3
-    result.x = this.normal.dot(V(this.v2).sub(point).cross(V(this.v3).sub(point))) / this.area
-    result.y = this.normal.dot(V(this.v3).sub(point).cross(V(this.v1).sub(point))) / this.area
+    result.x = this.normal.dot(V().cross(V(this.v2).sub(point), V(this.v3).sub(point))) / this.area
+    result.y = this.normal.dot(V().cross(V(this.v3).sub(point), V(this.v1).sub(point))) / this.area
     result.z = 1 - result.x - result.y
     return result
 }
@@ -62,7 +62,7 @@ Triangle.prototype.calculateUV = function(bary, uvs) {
     uv0.copy(uvs[0])
     uv1.copy(uvs[1])
     uv2.copy(uvs[2])
-    return uv0.scale(bary[0]).add(uv1.scale(bary.y)).add(uv2.scale(bary.z))
+    return uv0.scale(bary.x).add(uv1.scale(bary.y)).add(uv2.scale(bary.z))
 }
 
 Triangle.prototype.point = function(baryCoord, distance) {
@@ -72,3 +72,5 @@ Triangle.prototype.point = function(baryCoord, distance) {
     result.x = (baryCoord.x * this.v1.z) + (baryCoord.y * this.v2.z) + (baryCoord.z * this.v3.z)
     return result.add(V(this.normal).scale(distance))
 }
+
+export default Triangle

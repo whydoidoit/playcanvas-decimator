@@ -1,6 +1,8 @@
 import Accessor from './accessor'
 import Face from './face'
 import flatten from 'lodash/flatten'
+import Vertex from './vertex'
+import './vertex-format'
 
 const validTypes = {
     "POSITION": true,
@@ -22,7 +24,7 @@ function prepare(meshInstance, settings) {
     for (let j = 0; j < format.elements.length; j++) {
         let element = format.elements[j]
         if (validTypes[element.name]) {
-            data[element.name] = new Accessor(element.offset, format.size, locked, element.type, element.components)
+            data[element.name] = new Accessor(element.offset, format.size, locked, element.dataType, element.numComponents)
         }
     }
 
@@ -35,7 +37,7 @@ function prepare(meshInstance, settings) {
 
     let verticesCount = data.POSITION.length
     for (let i = 0; i < verticesCount; i++) {
-        vertices.add(i, new Vertex({
+        vertices.set(i, new Vertex({
             index: i,
             n: data.NORMAL ? data.NORMAL.get(i) : new pc.Vec3,
             v: data.POSITION ? data.POSITION.get(i) : new pc.Vec3,
@@ -51,19 +53,20 @@ function prepare(meshInstance, settings) {
 }
 
 function calculateFaces(meshInstance, vertices) {
-    let allVertices = vertices.values()
     let faces = new Set
-    let ib = meshInstance.mesh.indexBuffer
+    let ib = meshInstance.mesh.indexBuffer[0]
     let ibLocked = ib.lock()
-    let indexes = new Accessor(0, 1, ibLocked, pc.ELEMENTTYPE_UINT16, 1)
-    for (let i = 0, l = indexes.length; i < l; i += 3) {
+    let indexes = new Accessor(0, 2, ibLocked, pc.ELEMENTTYPE_UINT16, 1)
+    let numFaces = meshInstance.mesh.primitive[0].count
+    let base = meshInstance.mesh.primitive[0].base
+    for (let i = 0, l = numFaces; i < l; i += 3) {
         let face = new Face({
             vertices: [
-                indexes.get(i),
-                indexes.get(i + 1),
-                indexes.get(i + 2)
+                indexes.get(base + i),
+                indexes.get(base + i + 1),
+                indexes.get(base + i + 2)
             ]
-        }, allVertices)
+        }, vertices)
 
         face.v0.faces.add(face)
         face.v1.faces.add(face)
@@ -81,7 +84,7 @@ function calculateFaces(meshInstance, vertices) {
 }
 
 function specifyPreserved(vertices) {
-    vertices.values().forEach(v => {
+    vertices.forEach(v => {
         v.neighbours.forEach(u => {
             let faces = 0
             v.faces.forEach(f => {
@@ -96,47 +99,69 @@ function specifyPreserved(vertices) {
 }
 
 function calculateErrors(vertices) {
-    let allVertices = vertices.values();
-    allVertices.forEach(v => v.calculateError(vertices))
+    vertices.forEach(v => v.calculateError(vertices))
 }
 
 function removeFaces(numberOfFaces, vertices, faces) {
-    while (faces.length > numberOfFaces) {
+    while (faces.size > numberOfFaces) {
         let u = lowestCost(vertices)
         if (!u || u.removalCost > 10000) break
         let v = u.removalCandidate
-        collapse(faces, u, v)
+        collapse(vertices, faces, u, v)
     }
 }
 
 function collapse(vertices, faces, u, v) {
-    let removeFaces = []
-    v.n.add(u.n).scale(0.5)
-    u.faces.forEach(face => {
-        if (face.hasVertex(v)) {
-            removeFaces.push(face)
-        }
-    })
-    removeFaces.forEach(face => {
-        u.faces.remove(face)
-        faces.remove(face)
-        u.neighbours.forEach(neighbour => {
-            neighbour.faces.remove(face)
+
+    let tmpNeighbours = Array.from(u.neighbours).concat(Array.from(v.neighbours))
+
+    //Find all of the faces that are on u->v
+    let removeFaces = Array.from(faces).filter(face => face.hasVertex(v) && face.hasVertex(u))
+
+    let recalc = new Set
+    Array.from(faces).filter(f => f.hasVertex(u)).forEach(face => {
+        face.v.forEach(v => {
+            recalc.add(v)
+            v.neighbours.forEach(v => recalc.add(v))
         })
-    })
-    u.faces.forEach(face => {
+
         face.replace(u, v)
+
     })
-    vertices.remove(u.index)
-    u.neighbours.forEach(neighbour => {
-        neighbour.calculateError(vertices)
+
+
+    removeFaces.forEach(face => {
+        face.v.forEach(v => {
+            v.faces.delete(face)
+            recalc.add(v)
+            v.neighbours.forEach(v => v.faces.forEach(f => {
+                f.v.forEach(v => {
+                    v.neighbours.forEach(v => recalc.add(v))
+                    recalc.add(v)
+                })
+
+            }))
+        })
+        faces.delete(face)
+    })
+    tmpNeighbours.forEach(v => v.neighbours.forEach(v => recalc.add(v)))
+    Array.from(recalc).forEach(v => {
+        v.reconstructNeighbours()
+        v.neighbours.forEach(v => v.reconstructNeighbours())
+    })
+
+    v.n = Array.from(v.faces).reduce((a, face) => a.add(face.normal), new pc.Vec3).normalize()
+
+    vertices.delete(u.index)
+    Array.from(vertices.values()).forEach(v => {
+        v.calculateError(vertices)
     })
 }
 
 function lowestCost(vertices) {
     let lowestCost = Infinity
     let lowest = null
-    vertices.values().forEach(v => {
+    vertices.forEach(v => {
         if (v.removalCost < lowestCost) {
             lowestCost = v.removalCost
             lowest = v
@@ -148,26 +173,29 @@ function lowestCost(vertices) {
 function buildMesh(vertices, faces, settings) {
     let remap = new Map
     let index = 0
-    let verts = vertices.values();
+    let verts = Array.from(vertices.values())
     verts.forEach(v => {
         remap.set(v.index, index++)
     })
 
-    let pos = verts.map(v => v.v)
-    let normals = verts.map(v => v.n)
-    let uvs = verts.map(v => v.uv0)
-    let uvs1 = verts.map(v => v.uv1)
-    let indices = flatten(faces.map(face => f.vertices)).map(v => remap.get(v))
+    let pos = flatten(verts.map(v => Array.from(v.v.data)))
+    let normals = flatten(verts.map(v => Array.from(v.n.data)))
+    let uvs = flatten(verts.map(v => Array.from(v.uv0.data)))
+    let uvs1 = flatten(verts.map(v => Array.from(v.uv1.data)))
+    let indices = flatten(Array.from(faces).map(face => face.vertices)).map(v => remap.get(v))
+    let blendWeights = flatten(verts.map(v => Array.from(v.bw.data).slice(0, 2)))
+    let blendIndices = flatten(verts.map(v => Array.from(v.bi.data).slice(0, 2)))
+    let tangents = settings.normal && settings.uv0 ? pc.calculateTangents(pos, normals, uvs, indices) : null
 
     let mesh = pc.createMesh(pc.app.graphicsDevice, pos, {
-        normals: settings.normals ? normals : null,
+        normals: settings.normal ? normals : null,
         indices,
         uvs: settings.uv0 ? uvs : null,
         uvs1: settings.uv1 ? uvs1 : null,
         colors: settings.color ? verts.map(v => v.color) : null,
-        tangents: pc.calculateTangents(pos, normals, uvs, indices),
-        blendWeights: settings.blendWeights ? verts.map(v => v.blendWeight) : null,
-        blendIndices: settings.blendIndices ? verts.map(v => v.blendIndices) : null,
+        tangents: tangents,
+        blendWeights: settings.blendWeights ? blendWeights : null,
+        blendIndices: settings.blendIndices ? blendIndices : null,
     })
 
     return mesh
@@ -177,6 +205,7 @@ function decimate(numberOfFaces, meshInstance) {
     let settings = {}
     let vertices = prepare(meshInstance, settings)
     let faces = calculateFaces(meshInstance, vertices)
+    calculateErrors(vertices)
     specifyPreserved(vertices)
     removeFaces(numberOfFaces, vertices, faces)
     return buildMesh(vertices, faces, settings)
